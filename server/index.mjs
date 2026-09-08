@@ -193,4 +193,5 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, '127.0.0.1', () => console.log(`Odak sunucusu: http://127.0.0.1:${port}`));
+const host = process.env.HOST || '0.0.0.0';
+server.listen(port, host, () => console.log(`Odak sunucusu: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`));
