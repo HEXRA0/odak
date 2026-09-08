@@ -1,0 +1,23 @@
+[Unit]
+Description=Odak gorev yonetimi
+After=network.target
+
+[Service]
+Type=simple
+User=odak
+Group=odak
+WorkingDirectory=/opt/odak/current
+ExecStart=/opt/node-v24.19.0-linux-x64/bin/node server/index.mjs
+Environment=NODE_ENV=production
+Environment=PORT=4173
+Environment=DATABASE_PATH=/opt/odak/shared/data/tasks.db
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/odak/shared/data
+
+[Install]
+WantedBy=multi-user.target

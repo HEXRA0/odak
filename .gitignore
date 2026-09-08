@@ -1,0 +1,22 @@
+# Bağımlılıklar
+node_modules/
+.pnpm-store/
+
+# Veritabanı ve Kişisel Görev Verileri (GİZLİLİK)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite3
+
+# Ortam değişkenleri
+.env
+.env.local
+
+# Sistem ve Loglar
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
