@@ -538,10 +538,22 @@ export default function App() {
     window.history.pushState({}, '', PAGES[p]);
   };
 
-  const handleLogout = () => {
-    document.cookie = 'thedemir_session=; Path=/; Domain=.thedemir.com; Max-Age=0; SameSite=Lax';
-    document.cookie = 'thedemir_session=; Path=/; Max-Age=0; SameSite=Lax';
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore
+    }
+    try {
+      await fetch('https://kimlik.thedemir.com/api/auth/logout', { method: 'POST', credentials: 'include', mode: 'cors' });
+    } catch {
+      // ignore
+    }
+    document.cookie = 'thedemir_session=; Path=/; Domain=.thedemir.com; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+    document.cookie = 'thedemir_session=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
     localStorage.clear();
+    sessionStorage.clear();
+    setAccount(null);
     window.location.href = SSO_LOGIN_URL;
   };
 

@@ -189,6 +189,19 @@ async function handleApi(req, res, url) {
   const taskMatch = url.pathname.match(/^\/api\/tasks\/(\d+)$/);
   const activityMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/activity$/);
 
+  // Logout Endpoint
+  if (url.pathname === '/api/logout' || url.pathname === '/api/auth/logout') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Set-Cookie': [
+        'thedemir_session=; Path=/; Domain=.thedemir.com; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax',
+        'thedemir_session=; Path=/; Domain=odak.thedemir.com; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax',
+        'thedemir_session=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax'
+      ]
+    });
+    return res.end(JSON.stringify({ ok: true, ssoLoginUrl: `${SSO_LOGIN_URL}?redirect=https://odak.thedemir.com` }));
+  }
+
   const { authUser, profile } = resolveSession(req, url);
   const isSuperadmin = Boolean(authUser?.isSuperadmin || authUser?.role === 'superadmin' || profile?.role === 'admin');
 
