@@ -177,7 +177,11 @@ function validateTask(input, partial = false) {
   if (input.priority !== undefined && !priorities.has(input.priority)) return 'Geçersiz öncelik.';
   if (input.estimated_minutes !== undefined && input.estimated_minutes !== null && input.estimated_minutes !== '' && (!Number.isInteger(Number(input.estimated_minutes)) || Number(input.estimated_minutes) < 0)) return 'Tahmini süre geçersiz.';
   if (input.tags !== undefined && !Array.isArray(input.tags)) return 'Etiketler liste olmalıdır.';
-  if (input.assignee_id !== undefined && input.assignee_id !== null && !db.prepare('SELECT id FROM profiles WHERE id = ?').get(Number(input.assignee_id))) return 'Atanacak profil bulunamadı.';
+  if (input.assignee_id !== undefined && input.assignee_id !== null && input.assignee_id !== '' && Number(input.assignee_id) > 0) {
+    if (!db.prepare('SELECT id FROM profiles WHERE id = ?').get(Number(input.assignee_id))) {
+      return 'Atanacak profil bulunamadı.';
+    }
+  }
   return null;
 }
 
@@ -352,7 +356,7 @@ async function handleApi(req, res, url) {
       estimated_minutes: body.estimated_minutes === '' || body.estimated_minutes == null ? null : Number(body.estimated_minutes),
       tags: JSON.stringify((body.tags || []).map(String).map((tag) => tag.trim()).filter(Boolean)),
       created_by: profile.id,
-      assignee_id: Number(body.assignee_id || profile.id),
+      assignee_id: (body.assignee_id && Number(body.assignee_id) > 0) ? Number(body.assignee_id) : profile.id,
       user_id: authUser?.userId || profile.sso_user_id || `local_${profile.id}`,
       user_email: authUser?.email || profile.email || '',
       user_name: authUser?.fullName || profile.name || 'Kullanıcı',
@@ -390,7 +394,7 @@ async function handleApi(req, res, url) {
       if (field === 'tags') values[field] = JSON.stringify(body[field].map(String).map((tag) => tag.trim()).filter(Boolean));
       else if (field === 'archived') values[field] = body[field] ? 1 : 0;
       else if (field === 'estimated_minutes') values[field] = body[field] === '' || body[field] == null ? null : Number(body[field]);
-      else if (field === 'assignee_id') values[field] = Number(body[field]);
+      else if (field === 'assignee_id') values[field] = (body[field] && Number(body[field]) > 0) ? Number(body[field]) : profile.id;
       else if (field === 'due_date') values[field] = body[field] || null;
       else if (typeof body[field] === 'string') values[field] = body[field].trim();
       else values[field] = body[field];
