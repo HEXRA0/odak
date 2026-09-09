@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Check, Archive, ArrowRight, CalendarDays, ChevronRight, CircleDot,
-  Crown, Inbox, LogOut, Menu, Moon, Plus, Search, Sun, Timer,
-  UserPlus, X, Zap
+  Inbox, LogOut, Menu, Moon, Plus, Search, Sun, Timer,
+  X, Zap, User
 } from 'lucide-react';
+
+const SSO_LOGIN_URL = 'https://kimlik.thedemir.com/login?redirect=https://odak.thedemir.com';
 
 const STATUSES = {
   inbox: { label: 'Gelen kutusu', short: 'Gelen', color: '#8a8175' },
@@ -31,8 +33,6 @@ const PAGES = {
 
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [v, k]));
 
-const COLORS = ['#e45b35', '#5d76a9', '#4d8a70', '#8c65a8', '#c67b36', '#b64d68', '#317c83'];
-
 const DEFAULT_TASK = {
   title: '',
   description: '',
@@ -46,12 +46,13 @@ const DEFAULT_TASK = {
   assignee_id: '',
 };
 
-async function apiFetch(url, options = {}, profileId) {
+async function apiFetch(url, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (profileId) {
-    headers['X-Profile-Id'] = String(profileId);
-  }
   const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    window.location.href = SSO_LOGIN_URL;
+    return null;
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Bir şeyler ters gitti.');
   return data;
@@ -78,116 +79,14 @@ function Brand() {
 function Avatar({ profile, size = 'normal' }) {
   if (!profile) return null;
   return (
-    <span className={`avatar ${size}`} style={{ background: profile.color }} title={profile.name}>
-      {profile.initials}
+    <span className={`avatar ${size}`} style={{ background: profile.color || '#e45b35' }} title={profile.name}>
+      {profile.initials || 'KD'}
     </span>
   );
 }
 
-function ProfilePicker({ profiles, onSelect, onCreate }) {
-  return (
-    <div className="profile-picker">
-      <div className="picker-brand">
-        <Brand />
-      </div>
-      <section>
-        <h1>Kim çalışıyor?</h1>
-        <p>Profilini seç.</p>
-        <div className="profile-grid">
-          {profiles.map((p) => (
-            <button key={p.id} className="profile-card" onClick={() => onSelect(p)}>
-              <Avatar profile={p} size="large" />
-              <strong>{p.name}</strong>
-              {p.role === 'admin' && (
-                <span>
-                  <Crown size={12} /> Yönetici
-                </span>
-              )}
-            </button>
-          ))}
-          <button className="profile-card add-profile" onClick={onCreate}>
-            <span className="add-avatar">
-              <Plus size={27} />
-            </span>
-            <strong>Profil ekle</strong>
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function NewProfileModal({ onClose, onCreate }) {
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('user');
-  const [color, setColor] = useState(COLORS[1]);
-
-  return (
-    <>
-      <div className="drawer-scrim" onClick={onClose} />
-      <div className="profile-modal">
-        <header>
-          <div>
-            <h2>Yeni profil oluştur</h2>
-            <p>Bu profil görev alabilir ve görev paylaşabilir.</p>
-          </div>
-          <button className="icon-button" aria-label="Kapat" onClick={onClose}>
-            <X size={20} />
-          </button>
-        </header>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (name.trim()) onCreate({ name: name.trim(), role, color });
-          }}
-        >
-          <label>
-            Profil adı
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Örn. Ayşe Yılmaz"
-            />
-          </label>
-          <label>
-            Yetki
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="user">Kullanıcı — kendi ve paylaşılan görevleri görür</option>
-              <option value="admin">Admin — tüm hesapların görevlerini görür</option>
-            </select>
-          </label>
-          <label>
-            Profil rengi
-            <div className="color-options">
-              {COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  aria-label={`Renk ${c}`}
-                  className={color === c ? 'selected' : ''}
-                  style={{ background: c }}
-                  onClick={() => setColor(c)}
-                />
-              ))}
-            </div>
-          </label>
-          <button className="primary" type="submit">
-            <UserPlus size={16} /> Profili oluştur
-          </button>
-        </form>
-      </div>
-    </>
-  );
-}
-
-function QuickAdd({ onAdd, profiles, activeProfile }) {
+function QuickAdd({ onAdd }) {
   const [title, setTitle] = useState('');
-  const [assigneeId, setAssigneeId] = useState(String(activeProfile.id));
-
-  useEffect(() => {
-    setAssigneeId(String(activeProfile.id));
-  }, [activeProfile.id]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -195,10 +94,8 @@ function QuickAdd({ onAdd, profiles, activeProfile }) {
       await onAdd({
         ...DEFAULT_TASK,
         title: title.trim(),
-        assignee_id: Number(assigneeId),
       });
       setTitle('');
-      setAssigneeId(String(activeProfile.id));
     }
   }
 
@@ -213,17 +110,6 @@ function QuickAdd({ onAdd, profiles, activeProfile }) {
         placeholder="Yeni görev yaz…"
         aria-label="Yeni görev başlığı"
       />
-      <select
-        value={assigneeId}
-        onChange={(e) => setAssigneeId(e.target.value)}
-        aria-label="Görevi ata"
-      >
-        {profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.id === activeProfile.id ? 'Kendime' : p.name}
-          </option>
-        ))}
-      </select>
       <button type="submit" className="primary compact">
         Ekle <ArrowRight size={15} />
       </button>
@@ -237,7 +123,7 @@ function Sidebar({
   tasks,
   dark,
   setDark,
-  activeProfile,
+  account,
   onLogout,
   mobileOpen,
   closeMobile,
@@ -294,6 +180,7 @@ function Sidebar({
                 borderRadius: '8px',
                 padding: '6px 8px',
                 outline: 'none',
+                cursor: 'pointer',
               }}
             >
               <option value="all">🏢 Tüm Kullanıcılar</option>
@@ -330,16 +217,16 @@ function Sidebar({
             <span>{dark ? 'Açık tema' : 'Koyu tema'}</span>
           </button>
           <div className="profile active-profile">
-            <Avatar profile={activeProfile} />
+            <Avatar profile={account} />
             <div>
-              <strong>{activeProfile.name}</strong>
+              <strong>{account?.name || 'Kullanıcı'}</strong>
               <small>
-                {activeProfile.role === 'admin' || isSuperadmin
-                  ? 'Admin · tüm görevler'
-                  : 'Kullanıcı hesabı'}
+                {account?.role === 'admin' || isSuperadmin
+                  ? 'Süperadmin hesabı'
+                  : account?.email || 'Kullanıcı hesabı'}
               </small>
             </div>
-            <button className="logout-button" onClick={onLogout} title="Çıkış yap">
+            <button className="logout-button" onClick={onLogout} title="Hesaptan Çıkış Yap">
               <LogOut size={16} />
             </button>
           </div>
@@ -349,9 +236,7 @@ function Sidebar({
   );
 }
 
-function TaskCard({ task, onOpen, onStatus, compact = false, activeProfile }) {
-  const isShared = task.created_by !== task.assignee_id || task.assignee_id !== activeProfile.id;
-
+function TaskCard({ task, onOpen, onStatus, compact = false, isSuperadmin }) {
   return (
     <article
       className={`task-card ${compact ? 'compact-card' : ''}`}
@@ -385,10 +270,10 @@ function TaskCard({ task, onOpen, onStatus, compact = false, activeProfile }) {
               {formatDate(task.due_date)}
             </span>
           )}
-          {isShared && (
-            <span className="assignee-meta">
-              <Avatar profile={task.assignee} size="tiny" />
-              {task.assignee?.name}
+          {isSuperadmin && task.userName && (
+            <span className="assignee-meta" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <User size={11} />
+              {task.userName}
             </span>
           )}
         </div>
@@ -399,7 +284,7 @@ function TaskCard({ task, onOpen, onStatus, compact = false, activeProfile }) {
   );
 }
 
-function TaskList({ tasks, onOpen, onStatus, activeProfile }) {
+function TaskList({ tasks, onOpen, onStatus, isSuperadmin }) {
   return (
     <div className="task-list">
       {tasks.map((task) => (
@@ -408,7 +293,7 @@ function TaskList({ tasks, onOpen, onStatus, activeProfile }) {
           task={task}
           onOpen={onOpen}
           onStatus={onStatus}
-          activeProfile={activeProfile}
+          isSuperadmin={isSuperadmin}
         />
       ))}
       {!tasks.length && <EmptyState />}
@@ -428,7 +313,7 @@ function EmptyState() {
   );
 }
 
-function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
+function TaskDrawer({ task, onClose, onSave, onArchive }) {
   const [form, setForm] = useState(task || DEFAULT_TASK);
   const [tagsStr, setTagsStr] = useState((task?.tags || []).join(', '));
   const [activities, setActivities] = useState([]);
@@ -437,11 +322,11 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
     setForm(task || DEFAULT_TASK);
     setTagsStr((task?.tags || []).join(', '));
     if (task) {
-      apiFetch(`/api/tasks/${task.id}/activity`, {}, profileId)
-        .then(setActivities)
+      apiFetch(`/api/tasks/${task.id}/activity`)
+        .then((data) => setActivities(data || []))
         .catch(() => setActivities([]));
     }
-  }, [task, profileId]);
+  }, [task]);
 
   if (!task) return null;
 
@@ -468,7 +353,6 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
             e.preventDefault();
             onSave(task.id, {
               ...form,
-              assignee_id: Number(form.assignee_id),
               tags: tagsStr
                 .split(',')
                 .map((t) => t.trim())
@@ -484,16 +368,15 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
 
           <div className="ownership">
             <span>
-              <small>Oluşturan</small>
+              <small>Hesap</small>
               <Avatar profile={task.creator} size="tiny" />
-              {task.creator?.name}
+              {task.userName || task.creator?.name || 'Kullanıcı'}
             </span>
-            <ArrowRight size={14} />
-            <span>
-              <small>Atanan</small>
-              <Avatar profile={task.assignee} size="tiny" />
-              {task.assignee?.name}
-            </span>
+            {task.userEmail && (
+              <span style={{ fontSize: '10px', color: 'var(--muted)' }}>
+                ({task.userEmail})
+              </span>
+            )}
           </div>
 
           <label>
@@ -529,20 +412,6 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
             </label>
 
             <label>
-              Atanan kişi
-              <select
-                value={form.assignee_id}
-                onChange={(e) => update('assignee_id', Number(e.target.value))}
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
               Son tarih
               <input
                 type="date"
@@ -550,21 +419,22 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
                 onChange={(e) => update('due_date', e.target.value)}
               />
             </label>
+
+            <label>
+              Tahmini süre
+              <input
+                type="number"
+                min="0"
+                value={form.estimated_minutes ?? ''}
+                onChange={(e) => update('estimated_minutes', e.target.value)}
+                placeholder="Dakika"
+              />
+            </label>
           </div>
 
           <details className="advanced-fields">
             <summary>Gelişmiş bilgiler</summary>
             <div className="form-grid">
-              <label>
-                Tahmini süre
-                <input
-                  type="number"
-                  min="0"
-                  value={form.estimated_minutes ?? ''}
-                  onChange={(e) => update('estimated_minutes', e.target.value)}
-                  placeholder="Dakika"
-                />
-              </label>
               <label>
                 Talep eden
                 <input
@@ -637,9 +507,7 @@ function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
 }
 
 export default function App() {
-  const [profiles, setProfiles] = useState([]);
-  const [activeProfile, setActiveProfile] = useState(null);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [account, setAccount] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [archivedTasks, setArchivedTasks] = useState([]);
   const [page, setPage] = useState(() => PATH_TO_PAGE[window.location.pathname] || 'inbox');
@@ -651,7 +519,7 @@ export default function App() {
   const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark');
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Süperadmin & Kullanıcı Sistemi
+  // Süperadmin Kullanıcı Filtresi
   const [usersList, setUsersList] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('all');
 
@@ -670,51 +538,32 @@ export default function App() {
     window.history.pushState({}, '', PAGES[p]);
   };
 
-  const selectProfile = (p) => {
-    localStorage.setItem('activeProfileId', p.id);
-    setActiveProfile(p);
-    setSelectedTask(null);
-    window.history.pushState({}, '', PAGES.inbox);
-    setPage('inbox');
-  };
-
   const handleLogout = () => {
-    localStorage.removeItem('activeProfileId');
     document.cookie = 'thedemir_session=; Path=/; Domain=.thedemir.com; Max-Age=0; SameSite=Lax';
     document.cookie = 'thedemir_session=; Path=/; Max-Age=0; SameSite=Lax';
-    setActiveProfile(null);
-    setTasks([]);
-    setArchivedTasks([]);
-    window.history.pushState({}, '', '/profiller');
+    localStorage.clear();
+    window.location.href = SSO_LOGIN_URL;
   };
 
-  // Initial Load
+  // 1. Initial Session Load (Direct Account)
   useEffect(() => {
-    apiFetch('/api/profiles')
-      .then((profs) => {
-        setProfiles(profs);
-        const storedId = Number(localStorage.getItem('activeProfileId'));
-        const found = profs.find((p) => p.id === storedId);
-        if (found) {
-          setActiveProfile(found);
-          if (!PATH_TO_PAGE[window.location.pathname]) {
-            window.history.replaceState({}, '', PAGES.inbox);
-          }
-        } else if (profs.length > 0) {
-          setActiveProfile(profs[0]);
-          localStorage.setItem('activeProfileId', profs[0].id);
-        } else {
-          localStorage.removeItem('activeProfileId');
-          window.history.replaceState({}, '', '/profiller');
+    apiFetch('/api/session')
+      .then((sessionData) => {
+        if (!sessionData) return;
+        setAccount(sessionData);
+        if (!PATH_TO_PAGE[window.location.pathname]) {
+          window.history.replaceState({}, '', PAGES.inbox);
+        }
+
+        const isSuper = sessionData.ssoUser?.isSuperadmin || sessionData.role === 'admin';
+        if (isSuper) {
+          apiFetch('/api/users')
+            .then((u) => setUsersList(u || []))
+            .catch(() => setUsersList([]));
         }
       })
       .catch((err) => showToast(err.message))
       .finally(() => setLoading(false));
-
-    // Fetch users for superadmin filter if available
-    apiFetch('/api/users')
-      .then(setUsersList)
-      .catch(() => setUsersList([]));
   }, []);
 
   // History popstate
@@ -722,7 +571,6 @@ export default function App() {
     const onPop = () => {
       const p = PATH_TO_PAGE[window.location.pathname];
       if (p) setPage(p);
-      if (window.location.pathname === '/profiller') setActiveProfile(null);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -742,24 +590,23 @@ export default function App() {
 
   // Fetch Tasks
   async function loadTasks() {
-    if (activeProfile) {
+    if (account) {
       setLoading(true);
       try {
         let q = '';
         if (selectedUserId && selectedUserId !== 'all') {
           q = `?user_id=${encodeURIComponent(selectedUserId)}`;
         }
-        setTasks(await apiFetch(`/api/tasks${q}`, {}, activeProfile.id));
+        const data = await apiFetch(`/api/tasks${q}`);
+        if (data) setTasks(data);
+
         if (page === 'archive') {
-          setArchivedTasks(
-            await apiFetch(
-              `/api/tasks?archived=true${
-                selectedUserId && selectedUserId !== 'all' ? `&user_id=${encodeURIComponent(selectedUserId)}` : ''
-              }`,
-              {},
-              activeProfile.id
-            )
+          const arch = await apiFetch(
+            `/api/tasks?archived=true${
+              selectedUserId && selectedUserId !== 'all' ? `&user_id=${encodeURIComponent(selectedUserId)}` : ''
+            }`
           );
+          if (arch) setArchivedTasks(arch);
         }
       } catch (err) {
         showToast(err.message);
@@ -771,37 +618,18 @@ export default function App() {
 
   useEffect(() => {
     loadTasks();
-  }, [page, activeProfile?.id, selectedUserId]);
-
-  async function handleCreateProfile(data) {
-    try {
-      const created = await apiFetch('/api/profiles', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-      const all = await apiFetch('/api/profiles');
-      setProfiles(all);
-      setIsProfileModalOpen(false);
-      selectProfile(created);
-      showToast(`${created.name} profili oluşturuldu.`);
-    } catch (err) {
-      showToast(err.message);
-    }
-  }
+  }, [page, account, selectedUserId]);
 
   async function handleAddTask(taskData) {
     try {
-      const created = await apiFetch(
-        '/api/tasks',
-        { method: 'POST', body: JSON.stringify(taskData) },
-        activeProfile.id
-      );
-      setTasks((prev) => [created, ...prev]);
-      showToast(
-        created.assignee_id === activeProfile.id
-          ? 'Görev gelen kutusuna eklendi.'
-          : `Görev ${created.assignee?.name || ''} profiline atandı.`
-      );
+      const created = await apiFetch('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify(taskData),
+      });
+      if (created) {
+        setTasks((prev) => [created, ...prev]);
+        showToast('Görev gelen kutusuna eklendi.');
+      }
     } catch (err) {
       showToast(err.message);
     }
@@ -809,14 +637,15 @@ export default function App() {
 
   async function handleSaveTask(id, updates) {
     try {
-      const updated = await apiFetch(
-        `/api/tasks/${id}`,
-        { method: 'PATCH', body: JSON.stringify(updates) },
-        activeProfile.id
-      );
-      setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
-      setSelectedTask((prev) => (prev?.id === id ? updated : null));
-      showToast('Değişiklikler kaydedildi.');
+      const updated = await apiFetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      });
+      if (updated) {
+        setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+        setSelectedTask((prev) => (prev?.id === id ? updated : null));
+        showToast('Değişiklikler kaydedildi.');
+      }
     } catch (err) {
       showToast(err.message);
     }
@@ -830,7 +659,7 @@ export default function App() {
 
   async function handleArchiveTask(task) {
     try {
-      await apiFetch(`/api/tasks/${task.id}`, { method: 'DELETE' }, activeProfile.id);
+      await apiFetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
       setSelectedTask(null);
       showToast('Görev arşivlendi.');
@@ -841,11 +670,10 @@ export default function App() {
 
   async function handleRestoreTask(task) {
     try {
-      await apiFetch(
-        `/api/tasks/${task.id}`,
-        { method: 'PATCH', body: JSON.stringify({ archived: false }) },
-        activeProfile.id
-      );
+      await apiFetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: false }),
+      });
       setArchivedTasks((prev) => prev.filter((t) => t.id !== task.id));
       showToast('Görev geri yüklendi.');
     } catch (err) {
@@ -853,38 +681,16 @@ export default function App() {
     }
   }
 
-  if (!activeProfile) {
+  if (loading && !account) {
     return (
-      <>
-        {loading ? (
-          <div className="splash">
-            <Brand />
-            <span>Yükleniyor…</span>
-          </div>
-        ) : (
-          <ProfilePicker
-            profiles={profiles}
-            onSelect={selectProfile}
-            onCreate={() => setIsProfileModalOpen(true)}
-          />
-        )}
-        {isProfileModalOpen && (
-          <NewProfileModal
-            onClose={() => setIsProfileModalOpen(false)}
-            onCreate={handleCreateProfile}
-          />
-        )}
-        {toast && (
-          <div className="toast picker-toast">
-            <Check size={16} />
-            {toast}
-          </div>
-        )}
-      </>
+      <div className="splash">
+        <Brand />
+        <span>Yükleniyor…</span>
+      </div>
     );
   }
 
-  const isSuperadmin = activeProfile.role === 'admin' || usersList.length > 0;
+  const isSuperadmin = account?.role === 'admin' || usersList.length > 0;
 
   const currentList = page === 'archive' ? archivedTasks : tasks;
   const filteredTasks = currentList.filter((t) => {
@@ -895,7 +701,7 @@ export default function App() {
     if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
 
     const query = search.toLocaleLowerCase('tr');
-    const combined = `${t.title} ${t.description} ${t.requester} ${t.project} ${(t.tags || []).join(' ')} ${t.assignee?.name || ''}`.toLocaleLowerCase('tr');
+    const combined = `${t.title} ${t.description} ${t.requester} ${t.project} ${(t.tags || []).join(' ')} ${t.userName || ''}`.toLocaleLowerCase('tr');
     return combined.includes(query);
   });
 
@@ -916,7 +722,7 @@ export default function App() {
         tasks={tasks}
         dark={dark}
         setDark={setDark}
-        activeProfile={activeProfile}
+        account={account}
         mobileOpen={mobileOpen}
         navigate={navigate}
         onLogout={handleLogout}
@@ -956,13 +762,7 @@ export default function App() {
             </div>
           </section>
 
-          {page !== 'archive' && (
-            <QuickAdd
-              onAdd={handleAddTask}
-              profiles={profiles}
-              activeProfile={activeProfile}
-            />
-          )}
+          {page !== 'archive' && <QuickAdd onAdd={handleAddTask} />}
 
           <section className="task-section">
             <div className="section-toolbar">
@@ -1002,7 +802,7 @@ export default function App() {
                 tasks={filteredTasks}
                 onOpen={setSelectedTask}
                 onStatus={handleStatusChange}
-                activeProfile={activeProfile}
+                isSuperadmin={isSuperadmin}
               />
             )}
           </section>
@@ -1011,8 +811,6 @@ export default function App() {
 
       <TaskDrawer
         task={selectedTask}
-        profiles={profiles}
-        profileId={activeProfile.id}
         onClose={() => setSelectedTask(null)}
         onSave={handleSaveTask}
         onArchive={handleArchiveTask}
