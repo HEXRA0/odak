@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Target, Inbox, Calendar, Layers, Clock, Check, Archive,
-  Sun, Moon, LogOut, ChevronRight, ArrowRight, Plus, X,
-  Menu, Search, Shield
+  Check, Archive, ArrowRight, CalendarDays, ChevronRight, CircleDot,
+  Crown, Inbox, LogOut, Menu, Moon, Plus, Search, Sun, Timer,
+  UserPlus, X, Zap
 } from 'lucide-react';
 
 const STATUSES = {
@@ -68,7 +68,7 @@ function Brand() {
   return (
     <div className="brand">
       <span className="brand-mark">
-        <Target size={18} strokeWidth={3} />
+        <Check size={18} strokeWidth={3} />
       </span>
       <span>odak</span>
     </div>
@@ -100,7 +100,7 @@ function ProfilePicker({ profiles, onSelect, onCreate }) {
               <strong>{p.name}</strong>
               {p.role === 'admin' && (
                 <span>
-                  <Shield size={12} /> Yönetici
+                  <Crown size={12} /> Yönetici
                 </span>
               )}
             </button>
@@ -173,7 +173,7 @@ function NewProfileModal({ onClose, onCreate }) {
             </div>
           </label>
           <button className="primary" type="submit">
-            <Check size={16} /> Profili oluştur
+            <UserPlus size={16} /> Profili oluştur
           </button>
         </form>
       </div>
@@ -258,9 +258,9 @@ function Sidebar({
 
   const navItems = [
     ['inbox', Inbox, 'Gelen kutusu', counts.inbox],
-    ['today', Calendar, 'Bugün', counts.today],
-    ['all', Layers, 'Tüm görevler', tasks.length],
-    ['waiting', Clock, 'Beklemede', counts.waiting],
+    ['today', Zap, 'Bugün', counts.today],
+    ['all', CircleDot, 'Tüm görevler', tasks.length],
+    ['waiting', Timer, 'Beklemede', counts.waiting],
     ['done', Check, 'Tamamlananlar', counts.done],
     ['archive', Archive, 'Arşiv', null],
   ];
@@ -276,7 +276,7 @@ function Sidebar({
           </button>
         </div>
 
-        {/* Süperadmin Kullanıcı Seçici Bar */}
+        {/* Süperadmin Kullanıcı Seçici */}
         {isSuperadmin && usersList && usersList.length > 0 && (
           <div style={{ padding: '0 12px 14px' }}>
             <div className="nav-label" style={{ padding: '0 0 6px', color: '#e45b35' }}>
@@ -380,7 +380,7 @@ function TaskCard({ task, onOpen, onStatus, compact = false, activeProfile }) {
           )}
           {task.due_date && (
             <span className={isOverdue(task) ? 'overdue' : ''}>
-              <Calendar size={13} />
+              <CalendarDays size={13} />
               {isOverdue(task) ? 'Gecikti · ' : ''}
               {formatDate(task.due_date)}
             </span>
@@ -752,7 +752,13 @@ export default function App() {
         setTasks(await apiFetch(`/api/tasks${q}`, {}, activeProfile.id));
         if (page === 'archive') {
           setArchivedTasks(
-            await apiFetch(`/api/tasks?archived=true${selectedUserId && selectedUserId !== 'all' ? `&user_id=${encodeURIComponent(selectedUserId)}` : ''}`, {}, activeProfile.id)
+            await apiFetch(
+              `/api/tasks?archived=true${
+                selectedUserId && selectedUserId !== 'all' ? `&user_id=${encodeURIComponent(selectedUserId)}` : ''
+              }`,
+              {},
+              activeProfile.id
+            )
           );
         }
       } catch (err) {
