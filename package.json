@@ -7,14 +7,18 @@
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "start": "node server/index.mjs",
+    "test": "node tests/auth.test.mjs",
     "check": "node --test"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
 }

@@ -1,0 +1,18 @@
+{
+  "name": "Odak — The Demir",
+  "short_name": "Odak",
+  "description": "Kişisel görev yönetimi, Pomodoro ve derin çalışma uygulaması",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#18181b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -17,6 +17,8 @@ db.exec(`
     initials TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT '#e45b35',
     role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin','user')),
+    sso_user_id TEXT,
+    email TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -33,6 +35,9 @@ db.exec(`
     tags TEXT NOT NULL DEFAULT '[]',
     created_by INTEGER REFERENCES profiles(id),
     assignee_id INTEGER REFERENCES profiles(id),
+    user_id TEXT,
+    user_email TEXT,
+    user_name TEXT,
     archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -54,11 +59,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived);
 `);
 
+// Migrations / Dynamic Column Upgrades
 const taskColumns = new Set(db.prepare('PRAGMA table_info(tasks)').all().map((column) => column.name));
 if (!taskColumns.has('created_by')) db.exec('ALTER TABLE tasks ADD COLUMN created_by INTEGER REFERENCES profiles(id)');
 if (!taskColumns.has('assignee_id')) db.exec('ALTER TABLE tasks ADD COLUMN assignee_id INTEGER REFERENCES profiles(id)');
+if (!taskColumns.has('user_id')) db.exec('ALTER TABLE tasks ADD COLUMN user_id TEXT');
+if (!taskColumns.has('user_email')) db.exec('ALTER TABLE tasks ADD COLUMN user_email TEXT');
+if (!taskColumns.has('user_name')) db.exec('ALTER TABLE tasks ADD COLUMN user_name TEXT');
+
+const profileColumns = new Set(db.prepare('PRAGMA table_info(profiles)').all().map((column) => column.name));
+if (!profileColumns.has('sso_user_id')) db.exec('ALTER TABLE profiles ADD COLUMN sso_user_id TEXT');
+if (!profileColumns.has('email')) db.exec('ALTER TABLE profiles ADD COLUMN email TEXT');
+
 const activityColumns = new Set(db.prepare('PRAGMA table_info(activity)').all().map((column) => column.name));
 if (!activityColumns.has('actor_id')) db.exec('ALTER TABLE activity ADD COLUMN actor_id INTEGER REFERENCES profiles(id)');
+
+// Create indexes
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_sso_user_id ON profiles(sso_user_id) WHERE sso_user_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
+  CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by);
+  CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
+`);
 
 if (db.prepare('SELECT COUNT(*) AS count FROM profiles').get().count === 0) {
   db.prepare("INSERT INTO profiles (name, initials, color, role) VALUES (?, ?, ?, 'admin')").run('Yönetici', 'YÖ', '#e45b35');
@@ -66,12 +89,14 @@ if (db.prepare('SELECT COUNT(*) AS count FROM profiles').get().count === 0) {
 const defaultProfileId = db.prepare("SELECT id FROM profiles ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, id LIMIT 1").get().id;
 db.prepare('UPDATE tasks SET created_by = ? WHERE created_by IS NULL').run(defaultProfileId);
 db.prepare('UPDATE tasks SET assignee_id = ? WHERE assignee_id IS NULL').run(defaultProfileId);
-db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by); CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);');
 
 export function rowToTask(row) {
   if (!row) return null;
   const task = {
     ...row,
+    userId: row.user_id || null,
+    userEmail: row.user_email || null,
+    userName: row.user_name || null,
     archived: Boolean(row.archived),
     tags: JSON.parse(row.tags || '[]'),
     creator: row.creator_name ? { id: row.created_by, name: row.creator_name, initials: row.creator_initials, color: row.creator_color } : null,
