@@ -1,1215 +1,1023 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  CheckCircle2, Circle, Clock, Plus, Filter, Search, Shield, Lock, Unlock,
-  Play, Pause, RotateCcw, Volume2, User, LogOut, ChevronDown, Check,
-  AlertCircle, Calendar, Tag, Layers, ArrowRight, LayoutGrid, List,
-  Flame, Sparkles, X, Edit3, Trash2, Archive, RefreshCw, Eye, ExternalLink
+  Target, Inbox, Calendar, Layers, Clock, Check, Archive,
+  Sun, Moon, LogOut, ChevronRight, ArrowRight, Plus, X,
+  Menu, Search, Shield
 } from 'lucide-react';
 
-const SSO_LOGIN_URL = 'https://kimlik.thedemir.com/login?redirect=https://odak.thedemir.com';
+const STATUSES = {
+  inbox: { label: 'Gelen kutusu', short: 'Gelen', color: '#8a8175' },
+  todo: { label: 'Yapılacak', short: 'Yapılacak', color: '#5d76a9' },
+  progress: { label: 'Devam ediyor', short: 'Devam', color: '#c67b36' },
+  waiting: { label: 'Beklemede', short: 'Bekliyor', color: '#8c65a8' },
+  done: { label: 'Tamamlandı', short: 'Tamam', color: '#4d8a70' },
+};
 
-export default function App() {
-  // Session & User State
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [usersList, setUsersList] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState('all'); // 'all' or specific userId
+const PRIORITIES = {
+  low: { label: 'Düşük', mark: '—' },
+  normal: { label: 'Normal', mark: '•' },
+  high: { label: 'Yüksek', mark: '↑' },
+  urgent: { label: 'Acil', mark: '!' },
+};
 
-  // Tasks & Stats
-  const [tasks, setTasks] = useState([]);
-  const [stats, setStats] = useState({
-    total: 0, inbox: 0, todo: 0, progress: 0, waiting: 0, done: 0, urgent: 0, high: 0, due_today: 0, overdue: 0
-  });
-  const [activeTab, setActiveTab] = useState('inbox'); // 'inbox', 'today', 'progress', 'waiting', 'done', 'archived', 'all'
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
-  const [searchQuery, setSearchQuery] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState('all');
+const PAGES = {
+  inbox: '/gelen-kutusu',
+  today: '/bugun',
+  all: '/tum-gorevler',
+  waiting: '/beklemede',
+  done: '/tamamlananlar',
+  archive: '/arsiv',
+};
 
-  // Modals & Drawers
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState(null);
-  const [activityTask, setActivityTask] = useState(null);
+const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [v, k]));
+
+const COLORS = ['#e45b35', '#5d76a9', '#4d8a70', '#8c65a8', '#c67b36', '#b64d68', '#317c83'];
+
+const DEFAULT_TASK = {
+  title: '',
+  description: '',
+  status: 'inbox',
+  priority: 'normal',
+  requester: '',
+  project: '',
+  due_date: '',
+  estimated_minutes: '',
+  tags: [],
+  assignee_id: '',
+};
+
+async function apiFetch(url, options = {}, profileId) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (profileId) {
+    headers['X-Profile-Id'] = String(profileId);
+  }
+  const res = await fetch(url, { ...options, headers });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Bir şeyler ters gitti.');
+  return data;
+}
+
+const formatDate = (d) =>
+  d ? new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(`${d}T12:00:00`)) : '';
+
+const getToday = () => new Date().toLocaleDateString('en-CA');
+const isToday = (d) => d === getToday();
+const isOverdue = (t) => t.due_date && t.due_date < getToday() && t.status !== 'done';
+
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-mark">
+        <Target size={18} strokeWidth={3} />
+      </span>
+      <span>odak</span>
+    </div>
+  );
+}
+
+function Avatar({ profile, size = 'normal' }) {
+  if (!profile) return null;
+  return (
+    <span className={`avatar ${size}`} style={{ background: profile.color }} title={profile.name}>
+      {profile.initials}
+    </span>
+  );
+}
+
+function ProfilePicker({ profiles, onSelect, onCreate }) {
+  return (
+    <div className="profile-picker">
+      <div className="picker-brand">
+        <Brand />
+      </div>
+      <section>
+        <h1>Kim çalışıyor?</h1>
+        <p>Profilini seç.</p>
+        <div className="profile-grid">
+          {profiles.map((p) => (
+            <button key={p.id} className="profile-card" onClick={() => onSelect(p)}>
+              <Avatar profile={p} size="large" />
+              <strong>{p.name}</strong>
+              {p.role === 'admin' && (
+                <span>
+                  <Shield size={12} /> Yönetici
+                </span>
+              )}
+            </button>
+          ))}
+          <button className="profile-card add-profile" onClick={onCreate}>
+            <span className="add-avatar">
+              <Plus size={27} />
+            </span>
+            <strong>Profil ekle</strong>
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NewProfileModal({ onClose, onCreate }) {
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('user');
+  const [color, setColor] = useState(COLORS[1]);
+
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} />
+      <div className="profile-modal">
+        <header>
+          <div>
+            <h2>Yeni profil oluştur</h2>
+            <p>Bu profil görev alabilir ve görev paylaşabilir.</p>
+          </div>
+          <button className="icon-button" aria-label="Kapat" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </header>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) onCreate({ name: name.trim(), role, color });
+          }}
+        >
+          <label>
+            Profil adı
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Örn. Ayşe Yılmaz"
+            />
+          </label>
+          <label>
+            Yetki
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="user">Kullanıcı — kendi ve paylaşılan görevleri görür</option>
+              <option value="admin">Admin — tüm hesapların görevlerini görür</option>
+            </select>
+          </label>
+          <label>
+            Profil rengi
+            <div className="color-options">
+              {COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Renk ${c}`}
+                  className={color === c ? 'selected' : ''}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                />
+              ))}
+            </div>
+          </label>
+          <button className="primary" type="submit">
+            <Check size={16} /> Profili oluştur
+          </button>
+        </form>
+      </div>
+    </>
+  );
+}
+
+function QuickAdd({ onAdd, profiles, activeProfile }) {
+  const [title, setTitle] = useState('');
+  const [assigneeId, setAssigneeId] = useState(String(activeProfile.id));
+
+  useEffect(() => {
+    setAssigneeId(String(activeProfile.id));
+  }, [activeProfile.id]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (title.trim()) {
+      await onAdd({
+        ...DEFAULT_TASK,
+        title: title.trim(),
+        assignee_id: Number(assigneeId),
+      });
+      setTitle('');
+      setAssigneeId(String(activeProfile.id));
+    }
+  }
+
+  return (
+    <form className="quick-add simple-add" onSubmit={handleSubmit}>
+      <span className="plus-icon">
+        <Plus size={18} />
+      </span>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Yeni görev yaz…"
+        aria-label="Yeni görev başlığı"
+      />
+      <select
+        value={assigneeId}
+        onChange={(e) => setAssigneeId(e.target.value)}
+        aria-label="Görevi ata"
+      >
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.id === activeProfile.id ? 'Kendime' : p.name}
+          </option>
+        ))}
+      </select>
+      <button type="submit" className="primary compact">
+        Ekle <ArrowRight size={15} />
+      </button>
+    </form>
+  );
+}
+
+function Sidebar({
+  page,
+  navigate,
+  tasks,
+  dark,
+  setDark,
+  activeProfile,
+  onLogout,
+  mobileOpen,
+  closeMobile,
+  isSuperadmin,
+  selectedUserId,
+  onUserSelect,
+  usersList,
+}) {
+  const counts = useMemo(
+    () => ({
+      inbox: tasks.filter((t) => t.status === 'inbox').length,
+      today: tasks.filter((t) => isToday(t.due_date) && t.status !== 'done').length,
+      waiting: tasks.filter((t) => t.status === 'waiting').length,
+      done: tasks.filter((t) => t.status === 'done').length,
+    }),
+    [tasks]
+  );
+
+  const navItems = [
+    ['inbox', Inbox, 'Gelen kutusu', counts.inbox],
+    ['today', Calendar, 'Bugün', counts.today],
+    ['all', Layers, 'Tüm görevler', tasks.length],
+    ['waiting', Clock, 'Beklemede', counts.waiting],
+    ['done', Check, 'Tamamlananlar', counts.done],
+    ['archive', Archive, 'Arşiv', null],
+  ];
+
+  return (
+    <>
+      <div className={mobileOpen ? 'scrim' : ''} onClick={closeMobile} />
+      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-top">
+          <Brand />
+          <button className="icon-button mobile-close" aria-label="Menüyü kapat" onClick={closeMobile}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Süperadmin Kullanıcı Seçici Bar */}
+        {isSuperadmin && usersList && usersList.length > 0 && (
+          <div style={{ padding: '0 12px 14px' }}>
+            <div className="nav-label" style={{ padding: '0 0 6px', color: '#e45b35' }}>
+              Süperadmin Görünümü
+            </div>
+            <select
+              value={selectedUserId}
+              onChange={(e) => onUserSelect(e.target.value)}
+              style={{
+                width: '100%',
+                fontSize: '11px',
+                background: '#151c19',
+                color: '#e8eee9',
+                border: '1px solid #363a37',
+                borderRadius: '8px',
+                padding: '6px 8px',
+                outline: 'none',
+              }}
+            >
+              <option value="all">🏢 Tüm Kullanıcılar</option>
+              {usersList.map((u) => (
+                <option key={u.userId} value={u.userId}>
+                  👤 {u.fullName} {u.email ? `(${u.email})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <nav>
+          <div className="nav-label">Çalışma alanı</div>
+          {navItems.map(([key, Icon, label, count]) => (
+            <button
+              key={key}
+              className={page === key ? 'active' : ''}
+              onClick={() => {
+                navigate(key);
+                closeMobile();
+              }}
+            >
+              <Icon size={18} />
+              <span>{label}</span>
+              {count !== null && <em>{count}</em>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-foot">
+          <button onClick={() => setDark(!dark)}>
+            {dark ? <Sun size={18} /> : <Moon size={18} />}
+            <span>{dark ? 'Açık tema' : 'Koyu tema'}</span>
+          </button>
+          <div className="profile active-profile">
+            <Avatar profile={activeProfile} />
+            <div>
+              <strong>{activeProfile.name}</strong>
+              <small>
+                {activeProfile.role === 'admin' || isSuperadmin
+                  ? 'Admin · tüm görevler'
+                  : 'Kullanıcı hesabı'}
+              </small>
+            </div>
+            <button className="logout-button" onClick={onLogout} title="Çıkış yap">
+              <LogOut size={16} />
+            </button>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function TaskCard({ task, onOpen, onStatus, compact = false, activeProfile }) {
+  const isShared = task.created_by !== task.assignee_id || task.assignee_id !== activeProfile.id;
+
+  return (
+    <article
+      className={`task-card ${compact ? 'compact-card' : ''}`}
+      onClick={() => onOpen(task)}
+      draggable={!compact}
+      onDragStart={(e) => e.dataTransfer.setData('taskId', String(task.id))}
+    >
+      <button
+        className={`check-button ${task.status === 'done' ? 'checked' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onStatus(task, task.status === 'done' ? 'todo' : 'done');
+        }}
+        aria-label="Tamamla"
+      >
+        {task.status === 'done' && <Check size={13} />}
+      </button>
+
+      <div className="task-content">
+        <h3>{task.title}</h3>
+        <div className="task-meta">
+          {(task.priority === 'high' || task.priority === 'urgent') && (
+            <span className={`priority ${task.priority}`}>
+              {PRIORITIES[task.priority].mark} {PRIORITIES[task.priority].label}
+            </span>
+          )}
+          {task.due_date && (
+            <span className={isOverdue(task) ? 'overdue' : ''}>
+              <Calendar size={13} />
+              {isOverdue(task) ? 'Gecikti · ' : ''}
+              {formatDate(task.due_date)}
+            </span>
+          )}
+          {isShared && (
+            <span className="assignee-meta">
+              <Avatar profile={task.assignee} size="tiny" />
+              {task.assignee?.name}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <ChevronRight className="task-arrow" size={17} />
+    </article>
+  );
+}
+
+function TaskList({ tasks, onOpen, onStatus, activeProfile }) {
+  return (
+    <div className="task-list">
+      {tasks.map((task) => (
+        <TaskCard
+          key={task.id}
+          task={task}
+          onOpen={onOpen}
+          onStatus={onStatus}
+          activeProfile={activeProfile}
+        />
+      ))}
+      {!tasks.length && <EmptyState />}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="empty-state">
+      <span>
+        <Check size={24} />
+      </span>
+      <h3>Burada görev yok</h3>
+      <p>Yeni bir talep eklediğinizde burada görünecek.</p>
+    </div>
+  );
+}
+
+function TaskDrawer({ task, profiles, profileId, onClose, onSave, onArchive }) {
+  const [form, setForm] = useState(task || DEFAULT_TASK);
+  const [tagsStr, setTagsStr] = useState((task?.tags || []).join(', '));
   const [activities, setActivities] = useState([]);
 
-  // Pomodoro & Focus State
-  const [isPomodoroOpen, setIsPomodoroOpen] = useState(false);
-  const [pomodoroMode, setPomodoroMode] = useState('pomodoro'); // 'pomodoro' (25m), 'shortBreak' (5m), 'longBreak' (15m)
-  const [pomodoroTimeLeft, setPomodoroTimeLeft] = useState(25 * 60);
-  const [isPomodoroRunning, setIsPomodoroRunning] = useState(false);
-  const [activeFocusTask, setActiveFocusTask] = useState(null);
-  const pomodoroTimerRef = useRef(null);
-
-  // Security / PIN Lock Screen
-  const [isLocked, setIsLocked] = useState(false);
-  const [userPin, setUserPin] = useState(() => localStorage.getItem('odak_pin') || '');
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
-  const [isSettingPin, setIsSettingPin] = useState(false);
-  const [newPinInput, setNewPinInput] = useState('');
-
-  // 1. Initial Load & Session Fetch
   useEffect(() => {
-    fetchSession();
-  }, []);
-
-  const fetchSession = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/session');
-      if (res.status === 401) {
-        setSession(null);
-        setLoading(false);
-        return;
-      }
-      const data = await res.json();
-      setSession(data);
-
-      const isSuper = data.ssoUser?.isSuperadmin || data.role === 'admin';
-      if (isSuper) {
-        fetchUsers();
-      }
-    } catch (err) {
-      console.error('Session fetch error:', err);
-    } finally {
-      setLoading(false);
+    setForm(task || DEFAULT_TASK);
+    setTagsStr((task?.tags || []).join(', '));
+    if (task) {
+      apiFetch(`/api/tasks/${task.id}/activity`, {}, profileId)
+        .then(setActivities)
+        .catch(() => setActivities([]));
     }
-  };
+  }, [task, profileId]);
 
-  const fetchUsers = async () => {
-    try {
-      const res = await fetch('/api/users');
-      if (res.ok) {
-        const data = await res.json();
-        setUsersList(data);
-      }
-    } catch (err) {
-      console.error('Fetch users error:', err);
-    }
-  };
+  if (!task) return null;
 
-  // 2. Fetch Tasks & Stats based on selected user filter
-  const fetchTasksAndStats = async () => {
-    try {
-      let queryParams = '';
-      if (activeTab === 'archived') {
-        queryParams = '?archived=true';
-      }
-      if (selectedUserId && selectedUserId !== 'all') {
-        queryParams += (queryParams ? '&' : '?') + `user_id=${encodeURIComponent(selectedUserId)}`;
-      }
+  const update = (field, val) => setForm((prev) => ({ ...prev, [field]: val }));
 
-      const [tasksRes, statsRes] = await Promise.all([
-        fetch(`/api/tasks${queryParams}`),
-        fetch(`/api/stats${selectedUserId && selectedUserId !== 'all' ? `?user_id=${encodeURIComponent(selectedUserId)}` : ''}`)
-      ]);
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} />
+      <aside className="drawer">
+        <header>
+          <span>Görev #{task.id}</span>
+          <div>
+            <button className="icon-button" onClick={() => onArchive(task)} title="Arşivle">
+              <Archive size={18} />
+            </button>
+            <button className="icon-button" aria-label="Görev ayrıntısını kapat" onClick={onClose}>
+              <X size={20} />
+            </button>
+          </div>
+        </header>
 
-      if (tasksRes.ok) {
-        const taskData = await tasksRes.json();
-        setTasks(taskData);
-      }
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
-    } catch (err) {
-      console.error('Error fetching data:', err);
-    }
-  };
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave(task.id, {
+              ...form,
+              assignee_id: Number(form.assignee_id),
+              tags: tagsStr
+                .split(',')
+                .map((t) => t.trim())
+                .filter(Boolean),
+            });
+          }}
+        >
+          <input
+            className="title-input"
+            value={form.title || ''}
+            onChange={(e) => update('title', e.target.value)}
+          />
+
+          <div className="ownership">
+            <span>
+              <small>Oluşturan</small>
+              <Avatar profile={task.creator} size="tiny" />
+              {task.creator?.name}
+            </span>
+            <ArrowRight size={14} />
+            <span>
+              <small>Atanan</small>
+              <Avatar profile={task.assignee} size="tiny" />
+              {task.assignee?.name}
+            </span>
+          </div>
+
+          <label>
+            Açıklama
+            <textarea
+              value={form.description || ''}
+              onChange={(e) => update('description', e.target.value)}
+              placeholder="Detayları, bağlantıları veya notları ekleyin…"
+            />
+          </label>
+
+          <div className="form-grid essential-fields">
+            <label>
+              Durum
+              <select value={form.status} onChange={(e) => update('status', e.target.value)}>
+                {Object.entries(STATUSES).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Öncelik
+              <select value={form.priority} onChange={(e) => update('priority', e.target.value)}>
+                {Object.entries(PRIORITIES).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Atanan kişi
+              <select
+                value={form.assignee_id}
+                onChange={(e) => update('assignee_id', Number(e.target.value))}
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Son tarih
+              <input
+                type="date"
+                value={form.due_date || ''}
+                onChange={(e) => update('due_date', e.target.value)}
+              />
+            </label>
+          </div>
+
+          <details className="advanced-fields">
+            <summary>Gelişmiş bilgiler</summary>
+            <div className="form-grid">
+              <label>
+                Tahmini süre
+                <input
+                  type="number"
+                  min="0"
+                  value={form.estimated_minutes ?? ''}
+                  onChange={(e) => update('estimated_minutes', e.target.value)}
+                  placeholder="Dakika"
+                />
+              </label>
+              <label>
+                Talep eden
+                <input
+                  value={form.requester || ''}
+                  onChange={(e) => update('requester', e.target.value)}
+                  placeholder="Kişi / birim"
+                />
+              </label>
+              <label>
+                Proje
+                <input
+                  value={form.project || ''}
+                  onChange={(e) => update('project', e.target.value)}
+                  placeholder="Proje adı"
+                />
+              </label>
+              <label>
+                Etiketler
+                <input
+                  value={tagsStr}
+                  onChange={(e) => setTagsStr(e.target.value)}
+                  placeholder="backend, hata"
+                />
+              </label>
+            </div>
+          </details>
+
+          <button className="primary save-button" type="submit">
+            Değişiklikleri kaydet
+          </button>
+        </form>
+
+        <section className="activity">
+          <h4>Geçmiş</h4>
+          {activities.length ? (
+            activities.map((a) => (
+              <div key={a.id}>
+                <Avatar
+                  profile={
+                    a.actor_name
+                      ? { initials: a.actor_initials, color: a.actor_color, name: a.actor_name }
+                      : task.creator
+                  }
+                  size="tiny"
+                />
+                <p>
+                  <strong>
+                    {a.action === 'created'
+                      ? 'Görev oluşturuldu'
+                      : a.action === 'assigned'
+                      ? 'Görev atandı'
+                      : a.action === 'archived'
+                      ? 'Görev arşivlendi'
+                      : 'Görev güncellendi'}
+                  </strong>
+                  <small>
+                    {a.actor_name ? `${a.actor_name} · ` : ''}
+                    {new Date(`${a.created_at}Z`).toLocaleString('tr-TR')}
+                  </small>
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="muted">Henüz hareket yok.</p>
+          )}
+        </section>
+      </aside>
+    </>
+  );
+}
+
+export default function App() {
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfile, setActiveProfile] = useState(null);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [archivedTasks, setArchivedTasks] = useState([]);
+  const [page, setPage] = useState(() => PATH_TO_PAGE[window.location.pathname] || 'inbox');
+  const [search, setSearch] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState('');
+  const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Süperadmin & Kullanıcı Sistemi
+  const [usersList, setUsersList] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState('all');
 
   useEffect(() => {
-    if (session) {
-      fetchTasksAndStats();
-    }
-  }, [session, selectedUserId, activeTab]);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }, [dark]);
 
-  // Pomodoro Timer Logic
-  useEffect(() => {
-    if (isPomodoroRunning) {
-      pomodoroTimerRef.current = setInterval(() => {
-        setPomodoroTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(pomodoroTimerRef.current);
-            setIsPomodoroRunning(false);
-            playNotificationSound();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else {
-      clearInterval(pomodoroTimerRef.current);
-    }
-    return () => clearInterval(pomodoroTimerRef.current);
-  }, [isPomodoroRunning]);
-
-  const switchPomodoroMode = (mode) => {
-    setPomodoroMode(mode);
-    setIsPomodoroRunning(false);
-    if (mode === 'pomodoro') setPomodoroTimeLeft(25 * 60);
-    else if (mode === 'shortBreak') setPomodoroTimeLeft(5 * 60);
-    else if (mode === 'longBreak') setPomodoroTimeLeft(15 * 60);
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2600);
   };
 
-  const playNotificationSound = () => {
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-      osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.15); // A5
-      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 1.2);
-    } catch (e) {
-      console.log('Audio error:', e);
-    }
+  const navigate = (p) => {
+    setPage(p);
+    window.history.pushState({}, '', PAGES[p]);
   };
 
-  const formatTime = (secs) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
-
-  // PIN Lock Logic
-  const handlePinSubmit = (e) => {
-    e.preventDefault();
-    if (pinInput === userPin) {
-      setIsLocked(false);
-      setPinInput('');
-      setPinError('');
-    } else {
-      setPinError('Hatalı PIN Kodu!');
-      setPinInput('');
-    }
-  };
-
-  const saveNewPin = () => {
-    if (newPinInput.length >= 4) {
-      localStorage.setItem('odak_pin', newPinInput);
-      setUserPin(newPinInput);
-      setIsSettingPin(false);
-      setNewPinInput('');
-    }
+  const selectProfile = (p) => {
+    localStorage.setItem('activeProfileId', p.id);
+    setActiveProfile(p);
+    setSelectedTask(null);
+    window.history.pushState({}, '', PAGES.inbox);
+    setPage('inbox');
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('activeProfileId');
     document.cookie = 'thedemir_session=; Path=/; Domain=.thedemir.com; Max-Age=0; SameSite=Lax';
     document.cookie = 'thedemir_session=; Path=/; Max-Age=0; SameSite=Lax';
-    window.location.href = SSO_LOGIN_URL;
+    setActiveProfile(null);
+    setTasks([]);
+    setArchivedTasks([]);
+    window.history.pushState({}, '', '/profiller');
   };
 
-  // Task Operations
-  const handleToggleTaskStatus = async (task) => {
-    const newStatus = task.status === 'done' ? 'todo' : 'done';
+  // Initial Load
+  useEffect(() => {
+    apiFetch('/api/profiles')
+      .then((profs) => {
+        setProfiles(profs);
+        const storedId = Number(localStorage.getItem('activeProfileId'));
+        const found = profs.find((p) => p.id === storedId);
+        if (found) {
+          setActiveProfile(found);
+          if (!PATH_TO_PAGE[window.location.pathname]) {
+            window.history.replaceState({}, '', PAGES.inbox);
+          }
+        } else if (profs.length > 0) {
+          setActiveProfile(profs[0]);
+          localStorage.setItem('activeProfileId', profs[0].id);
+        } else {
+          localStorage.removeItem('activeProfileId');
+          window.history.replaceState({}, '', '/profiller');
+        }
+      })
+      .catch((err) => showToast(err.message))
+      .finally(() => setLoading(false));
+
+    // Fetch users for superadmin filter if available
+    apiFetch('/api/users')
+      .then(setUsersList)
+      .catch(() => setUsersList([]));
+  }, []);
+
+  // History popstate
+  useEffect(() => {
+    const onPop = () => {
+      const p = PATH_TO_PAGE[window.location.pathname];
+      if (p) setPage(p);
+      if (window.location.pathname === '/profiller') setActiveProfile(null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Keyboard shortcut Ctrl+K
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        document.querySelector('.top-search input')?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Fetch Tasks
+  async function loadTasks() {
+    if (activeProfile) {
+      setLoading(true);
+      try {
+        let q = '';
+        if (selectedUserId && selectedUserId !== 'all') {
+          q = `?user_id=${encodeURIComponent(selectedUserId)}`;
+        }
+        setTasks(await apiFetch(`/api/tasks${q}`, {}, activeProfile.id));
+        if (page === 'archive') {
+          setArchivedTasks(
+            await apiFetch(`/api/tasks?archived=true${selectedUserId && selectedUserId !== 'all' ? `&user_id=${encodeURIComponent(selectedUserId)}` : ''}`, {}, activeProfile.id)
+          );
+        }
+      } catch (err) {
+        showToast(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    loadTasks();
+  }, [page, activeProfile?.id, selectedUserId]);
+
+  async function handleCreateProfile(data) {
     try {
-      const res = await fetch(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
+      const created = await apiFetch('/api/profiles', {
+        method: 'POST',
+        body: JSON.stringify(data),
       });
-      if (res.ok) {
-        fetchTasksAndStats();
-      }
+      const all = await apiFetch('/api/profiles');
+      setProfiles(all);
+      setIsProfileModalOpen(false);
+      selectProfile(created);
+      showToast(`${created.name} profili oluşturuldu.`);
     } catch (err) {
-      console.error('Update status error:', err);
+      showToast(err.message);
     }
-  };
-
-  const handleSaveTask = async (taskData) => {
-    try {
-      if (editingTask && editingTask.id) {
-        const res = await fetch(`/api/tasks/${editingTask.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(taskData)
-        });
-        if (res.ok) {
-          setIsTaskModalOpen(false);
-          setEditingTask(null);
-          fetchTasksAndStats();
-        }
-      } else {
-        const res = await fetch('/api/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(taskData)
-        });
-        if (res.ok) {
-          setIsTaskModalOpen(false);
-          fetchTasksAndStats();
-        }
-      }
-    } catch (err) {
-      console.error('Save task error:', err);
-    }
-  };
-
-  const handleDeleteTask = async (id) => {
-    if (!confirm('Bu görevi arşivlemek istediğinizden emin misiniz?')) return;
-    try {
-      const res = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchTasksAndStats();
-      }
-    } catch (err) {
-      console.error('Delete error:', err);
-    }
-  };
-
-  const openActivity = async (task) => {
-    setActivityTask(task);
-    try {
-      const res = await fetch(`/api/tasks/${task.id}/activity`);
-      if (res.ok) {
-        const data = await res.json();
-        setActivities(data);
-      }
-    } catch (err) {
-      console.error('Activity fetch error:', err);
-    }
-  };
-
-  // Filter Tasks by Active Tab, Priority & Search
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      // Tab filter
-      if (activeTab === 'inbox' && t.status !== 'inbox') return false;
-      if (activeTab === 'today') {
-        const today = new Date().toISOString().split('T')[0];
-        if (t.due_date !== today && t.priority !== 'urgent') return false;
-      }
-      if (activeTab === 'progress' && t.status !== 'progress') return false;
-      if (activeTab === 'waiting' && t.status !== 'waiting') return false;
-      if (activeTab === 'done' && t.status !== 'done') return false;
-
-      // Priority filter
-      if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
-
-      // Search filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchTitle = t.title?.toLowerCase().includes(q);
-        const matchDesc = t.description?.toLowerCase().includes(q);
-        const matchProject = t.project?.toLowerCase().includes(q);
-        const matchUser = t.userName?.toLowerCase().includes(q) || t.userEmail?.toLowerCase().includes(q);
-        if (!matchTitle && !matchDesc && !matchProject && !matchUser) return false;
-      }
-
-      return true;
-    });
-  }, [tasks, activeTab, priorityFilter, searchQuery]);
-
-  // Loading State
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 text-zinc-400">
-        <div className="w-12 h-12 border-4 border-amber-500/20 border-t-amber-500 rounded-full animate-spin mb-4"></div>
-        <p className="font-mono text-sm tracking-widest text-zinc-300">ODAK YÜKLENİYOR...</p>
-      </div>
-    );
   }
 
-  // Not Authenticated
-  if (!session) {
+  async function handleAddTask(taskData) {
+    try {
+      const created = await apiFetch(
+        '/api/tasks',
+        { method: 'POST', body: JSON.stringify(taskData) },
+        activeProfile.id
+      );
+      setTasks((prev) => [created, ...prev]);
+      showToast(
+        created.assignee_id === activeProfile.id
+          ? 'Görev gelen kutusuna eklendi.'
+          : `Görev ${created.assignee?.name || ''} profiline atandı.`
+      );
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  async function handleSaveTask(id, updates) {
+    try {
+      const updated = await apiFetch(
+        `/api/tasks/${id}`,
+        { method: 'PATCH', body: JSON.stringify(updates) },
+        activeProfile.id
+      );
+      setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      setSelectedTask((prev) => (prev?.id === id ? updated : null));
+      showToast('Değişiklikler kaydedildi.');
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  async function handleStatusChange(task, newStatus) {
+    if (task && task.status !== newStatus) {
+      await handleSaveTask(task.id, { status: newStatus });
+    }
+  }
+
+  async function handleArchiveTask(task) {
+    try {
+      await apiFetch(`/api/tasks/${task.id}`, { method: 'DELETE' }, activeProfile.id);
+      setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      setSelectedTask(null);
+      showToast('Görev arşivlendi.');
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  async function handleRestoreTask(task) {
+    try {
+      await apiFetch(
+        `/api/tasks/${task.id}`,
+        { method: 'PATCH', body: JSON.stringify({ archived: false }) },
+        activeProfile.id
+      );
+      setArchivedTasks((prev) => prev.filter((t) => t.id !== task.id));
+      showToast('Görev geri yüklendi.');
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  if (!activeProfile) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 text-zinc-100">
-        <div className="w-full max-w-md glass-panel p-8 rounded-2xl text-center border border-zinc-800 shadow-2xl">
-          <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Flame className="w-8 h-8 text-amber-500" />
+      <>
+        {loading ? (
+          <div className="splash">
+            <Brand />
+            <span>Yükleniyor…</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight mb-2">The Demir — Odak</h1>
-          <p className="text-zinc-400 text-sm mb-8">
-            Kişisel görevlerinizi düzenlemek ve derin odaklanma oturumları başlatmak için lütfen Kimlik ile giriş yapın.
-          </p>
-          <a
-            href={SSO_LOGIN_URL}
-            className="w-full py-3.5 px-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-xl flex items-center justify-center gap-2 transition shadow-lg shadow-amber-500/20"
-          >
-            <Shield className="w-5 h-5" />
-            Kimlik ile Giriş Yap
-          </a>
-        </div>
-      </div>
-    );
-  }
-
-  // 🔒 PIN Lock Screen Overlay
-  if (isLocked) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 text-zinc-100">
-        <div className="w-full max-w-xs glass-panel p-8 rounded-2xl text-center border border-zinc-800 shadow-2xl">
-          <div className="w-14 h-14 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4 text-red-400">
-            <Lock className="w-7 h-7" />
+        ) : (
+          <ProfilePicker
+            profiles={profiles}
+            onSelect={selectProfile}
+            onCreate={() => setIsProfileModalOpen(true)}
+          />
+        )}
+        {isProfileModalOpen && (
+          <NewProfileModal
+            onClose={() => setIsProfileModalOpen(false)}
+            onCreate={handleCreateProfile}
+          />
+        )}
+        {toast && (
+          <div className="toast picker-toast">
+            <Check size={16} />
+            {toast}
           </div>
-          <h2 className="text-lg font-bold mb-1">Odak Kilitli</h2>
-          <p className="text-xs text-zinc-400 mb-6">Devam etmek için 4 haneli PIN kodunuzu girin</p>
-
-          <form onSubmit={handlePinSubmit} className="space-y-4">
-            <input
-              type="password"
-              maxLength={6}
-              autoFocus
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="••••"
-              className="w-full py-3 text-center text-2xl tracking-[0.5em] font-mono bg-zinc-900 border border-zinc-700 rounded-xl focus:border-amber-500 focus:outline-none"
-            />
-            {pinError && <p className="text-xs text-red-400 font-medium">{pinError}</p>}
-            <button
-              type="submit"
-              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-xl transition flex items-center justify-center gap-2"
-            >
-              <Unlock className="w-4 h-4" /> Kilidi Aç
-            </button>
-          </form>
-        </div>
-      </div>
+        )}
+      </>
     );
   }
 
-  const isSuperadmin = Boolean(session.ssoUser?.isSuperadmin || session.role === 'admin');
+  const isSuperadmin = activeProfile.role === 'admin' || usersList.length > 0;
+
+  const currentList = page === 'archive' ? archivedTasks : tasks;
+  const filteredTasks = currentList.filter((t) => {
+    if (page === 'inbox' && t.status !== 'inbox') return false;
+    if (page === 'today' && (!isToday(t.due_date) || t.status === 'done')) return false;
+    if (page === 'waiting' && t.status !== 'waiting') return false;
+    if (page === 'done' && t.status !== 'done') return false;
+    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
+
+    const query = search.toLocaleLowerCase('tr');
+    const combined = `${t.title} ${t.description} ${t.requester} ${t.project} ${(t.tags || []).join(' ')} ${t.assignee?.name || ''}`.toLocaleLowerCase('tr');
+    return combined.includes(query);
+  });
+
+  const pageTitle =
+    {
+      inbox: 'Gelen kutusu',
+      today: 'Bugün',
+      all: 'Tüm görevler',
+      waiting: 'Beklemede',
+      done: 'Tamamlananlar',
+      archive: 'Arşiv',
+    }[page] || 'Görevler';
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-amber-500 selection:text-zinc-950 pb-20 md:pb-6">
-      {/* 🏛️ 1. TOP HEADER */}
-      <header className="sticky top-0 z-30 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          {/* Logo & Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-center text-amber-500 shadow-sm">
-              <Flame className="w-5 h-5" />
-            </div>
+    <div className="app-shell">
+      <Sidebar
+        page={page}
+        tasks={tasks}
+        dark={dark}
+        setDark={setDark}
+        activeProfile={activeProfile}
+        mobileOpen={mobileOpen}
+        navigate={navigate}
+        onLogout={handleLogout}
+        closeMobile={() => setMobileOpen(false)}
+        isSuperadmin={isSuperadmin}
+        selectedUserId={selectedUserId}
+        onUserSelect={setSelectedUserId}
+        usersList={usersList}
+      />
+
+      <main>
+        <header className="topbar">
+          <button
+            className="icon-button menu-button"
+            aria-label="Menüyü aç"
+            onClick={() => setMobileOpen(true)}
+          >
+            <Menu size={21} />
+          </button>
+
+          <div className="top-search">
+            <Search size={17} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Görevlerde ara…"
+            />
+            <kbd>Ctrl K</kbd>
+          </div>
+        </header>
+
+        <div className="content">
+          <section className="hero simple-hero">
             <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight">Odak</span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">
-                  The Demir
-                </span>
-                {isSuperadmin && (
-                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 font-semibold flex items-center gap-1">
-                    <Shield className="w-3 h-3" /> Süperadmin
-                  </span>
-                )}
-              </div>
+              <h1>{pageTitle}</h1>
+              <span>{filteredTasks.length} görev</span>
             </div>
-          </div>
+          </section>
 
-          {/* Quick Actions & User Bar */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Pomodoro Quick Launch */}
-            <button
-              onClick={() => setIsPomodoroOpen(!isPomodoroOpen)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
-                isPomodoroRunning
-                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                  : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-amber-500" />
-              <span className="font-mono font-semibold">{formatTime(pomodoroTimeLeft)}</span>
-            </button>
+          {page !== 'archive' && (
+            <QuickAdd
+              onAdd={handleAddTask}
+              profiles={profiles}
+              activeProfile={activeProfile}
+            />
+          )}
 
-            {/* Privacy / PIN Lock Button */}
-            {userPin ? (
-              <button
-                onClick={() => setIsLocked(true)}
-                title="Ekranı Kilitle"
-                className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 transition"
-              >
-                <Lock className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                onClick={() => setIsSettingPin(true)}
-                title="PIN Kodu Belirle"
-                className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-amber-400 transition text-xs flex items-center gap-1"
-              >
-                <Shield className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* User Badge & Logout */}
-            <div className="flex items-center gap-2 pl-2 border-l border-zinc-800">
-              <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs text-white"
-                style={{ backgroundColor: session.color || '#e45b35' }}
-                title={session.email || session.name}
-              >
-                {session.initials || 'KD'}
+          <section className="task-section">
+            <div className="section-toolbar">
+              <div>
+                <h2>{page === 'inbox' ? 'Görevler' : pageTitle}</h2>
               </div>
-              <div className="hidden sm:block text-left">
-                <div className="text-xs font-semibold leading-tight">{session.name}</div>
-                <div className="text-[10px] text-zinc-400 leading-tight truncate max-w-[120px]">{session.email || session.role}</div>
-              </div>
-              <button
-                onClick={handleLogout}
-                title="Çıkış Yap"
-                className="p-2 rounded-xl hover:bg-zinc-800 text-zinc-400 hover:text-red-400 transition ml-1"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* 👑 2. SUPERADMIN USER SWITCHER BAR */}
-        {isSuperadmin && (
-          <div className="bg-gradient-to-r from-amber-500/10 via-zinc-900 to-amber-500/10 border-t border-b border-amber-500/20 px-4 py-2.5">
-            <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-amber-500 text-zinc-950 font-bold text-[10px] uppercase tracking-wider">
-                  Admin Görünümü
-                </span>
-                <span className="text-zinc-300 font-medium">
-                  {selectedUserId === 'all'
-                    ? 'Tüm Organizasyonun Görevleri Listeleniyor'
-                    : `Seçili Kullanıcı: ${usersList.find((u) => u.userId === selectedUserId)?.fullName || selectedUserId}`}
-                </span>
-              </div>
-
-              {/* User Dropdown Selector */}
-              <div className="flex items-center gap-2">
-                <label className="text-zinc-400">Kullanıcı Filtresi:</label>
+              <div className="toolbar-actions">
                 <select
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="bg-zinc-900 border border-amber-500/30 text-amber-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-500 font-medium text-xs cursor-pointer"
+                  value={priorityFilter}
+                  onChange={(e) => setPriorityFilter(e.target.value)}
+                  aria-label="Öncelik filtresi"
                 >
-                  <option value="all">🏢 Tüm Kullanıcılar (Genel Görünüm)</option>
-                  {usersList.map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      👤 {u.fullName} {u.email ? `(${u.email})` : ''} — {u.activeTasks} aktif görev
+                  <option value="all">Tüm öncelikler</option>
+                  {Object.entries(PRIORITIES).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v.label}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
-          </div>
-        )}
-      </header>
 
-      {/* 🚀 3. MAIN CONTENT AREA */}
-      <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-6 flex-1 flex flex-col gap-6">
-        {/* STATS OVERVIEW CARDS */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div
-            onClick={() => setActiveTab('inbox')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'inbox' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Gelen Kutusu</span>
-              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono">{stats.inbox}</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('today')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'today' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Bugün / Acil</span>
-              <span className="w-2 h-2 rounded-full bg-red-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-red-400">{stats.due_today + stats.urgent}</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('progress')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'progress' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Devam Eden</span>
-              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-amber-400">{stats.progress}</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('waiting')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'waiting' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Beklemede</span>
-              <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-purple-400">{stats.waiting}</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('done')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'done' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Tamamlanan</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-400">{stats.done}</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('all')}
-            className={`cursor-pointer p-4 rounded-2xl glass-card transition ${
-              activeTab === 'all' ? 'border-amber-500 bg-amber-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
-              <span>Toplam Görev</span>
-              <span className="w-2 h-2 rounded-full bg-zinc-500"></span>
-            </div>
-            <div className="text-2xl font-bold font-mono">{stats.total}</div>
-          </div>
-        </div>
-
-        {/* CONTROLS & FILTER BAR */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800">
-          {/* Navigation Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-            {[
-              { id: 'inbox', label: 'Gelen Kutusu', count: stats.inbox },
-              { id: 'today', label: 'Bugün', count: stats.due_today },
-              { id: 'progress', label: 'Devam Eden', count: stats.progress },
-              { id: 'waiting', label: 'Beklemede', count: stats.waiting },
-              { id: 'done', label: 'Tamamlanan', count: stats.done },
-              { id: 'archived', label: 'Arşiv' },
-              { id: 'all', label: 'Tümü', count: stats.total }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
-                  activeTab === tab.id
-                    ? 'bg-amber-500 text-zinc-950 shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                }`}
-              >
-                <span>{tab.label}</span>
-                {tab.count !== undefined && (
-                  <span
-                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
-                      activeTab === tab.id ? 'bg-zinc-950/20 text-zinc-950' : 'bg-zinc-800 text-zinc-400'
-                    }`}
-                  >
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Search, Priority & View Mode Toggle */}
-          <div className="flex items-center gap-2">
-            {/* Search Input */}
-            <div className="relative flex-1 sm:w-48">
-              <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Görevlerde ara..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs focus:outline-none focus:border-amber-500 text-zinc-200"
-              />
-            </div>
-
-            {/* View Mode Toggle */}
-            <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-xl p-0.5">
-              <button
-                onClick={() => setViewMode('list')}
-                title="Liste Görünümü"
-                className={`p-1.5 rounded-lg transition ${
-                  viewMode === 'list' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <List className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('kanban')}
-                title="Kanban Panosu"
-                className={`p-1.5 rounded-lg transition ${
-                  viewMode === 'kanban' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <LayoutGrid className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Add Task Button */}
-            <button
-              onClick={() => {
-                setEditingTask(null);
-                setIsTaskModalOpen(true);
-              }}
-              className="py-1.5 px-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Görev Ekle</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 📋 4. TASK LIST / KANBAN VIEW */}
-        {viewMode === 'list' ? (
-          <div className="space-y-2">
-            {filteredTasks.length === 0 ? (
-              <div className="text-center py-16 border border-dashed border-zinc-800 rounded-2xl p-8 text-zinc-500">
-                <CheckCircle2 className="w-10 h-10 mx-auto mb-3 opacity-30 text-amber-500" />
-                <p className="text-sm font-medium text-zinc-400">Bu görünümde hiçbir görev bulunamadı.</p>
-                <p className="text-xs text-zinc-600 mt-1">Yeni bir görev ekleyerek çalışmaya başlayabilirsiniz.</p>
+            {loading ? (
+              <div className="loading">Görevler yükleniyor…</div>
+            ) : page === 'archive' ? (
+              <div className="task-list">
+                {filteredTasks.map((t) => (
+                  <div key={t.id} className="archive-row">
+                    <span>{t.title}</span>
+                    <button onClick={() => handleRestoreTask(t)}>Geri yükle</button>
+                  </div>
+                ))}
+                {!filteredTasks.length && <EmptyState />}
               </div>
             ) : (
-              filteredTasks.map((task) => (
-                <div
-                  key={task.id}
-                  className={`group glass-card p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition hover:border-zinc-700 ${
-                    task.status === 'done' ? 'opacity-60 bg-zinc-900/30' : ''
-                  }`}
-                >
-                  {/* Checkbox + Title + Metadata */}
-                  <div className="flex items-start gap-3 flex-1">
-                    <button
-                      onClick={() => handleToggleTaskStatus(task)}
-                      className="mt-0.5 text-zinc-500 hover:text-amber-500 transition"
-                    >
-                      {task.status === 'done' ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                      ) : (
-                        <Circle className="w-5 h-5" />
-                      )}
-                    </button>
-
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`font-medium text-sm text-zinc-100 ${
-                            task.status === 'done' ? 'line-through text-zinc-400' : ''
-                          }`}
-                        >
-                          {task.title}
-                        </span>
-
-                        {/* Priority Badge */}
-                        {task.priority === 'urgent' && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
-                            ACİL
-                          </span>
-                        )}
-                        {task.priority === 'high' && (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                            YÜKSEK
-                          </span>
-                        )}
-
-                        {/* Project Tag */}
-                        {task.project && (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
-                            {task.project}
-                          </span>
-                        )}
-                      </div>
-
-                      {task.description && (
-                        <p className="text-xs text-zinc-400 mt-1 line-clamp-2">{task.description}</p>
-                      )}
-
-                      {/* Footer Info: User, Date, Tags */}
-                      <div className="flex items-center gap-3 mt-2 text-[11px] text-zinc-500 flex-wrap">
-                        {isSuperadmin && task.userName && (
-                          <span className="flex items-center gap-1 text-amber-400/80 font-medium">
-                            <User className="w-3 h-3" />
-                            {task.userName}
-                          </span>
-                        )}
-                        {task.due_date && (
-                          <span className="flex items-center gap-1 text-zinc-400">
-                            <Calendar className="w-3 h-3" />
-                            {task.due_date}
-                          </span>
-                        )}
-                        {task.estimated_minutes && (
-                          <span className="flex items-center gap-1 text-zinc-400">
-                            <Clock className="w-3 h-3" />
-                            {task.estimated_minutes} dk
-                          </span>
-                        )}
-                        {task.tags?.map((tag) => (
-                          <span key={tag} className="text-zinc-400 bg-zinc-800/80 px-1.5 py-0.2 rounded text-[10px]">
-                            #{tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1.5 self-end sm:self-center opacity-90 sm:opacity-0 group-hover:opacity-100 transition">
-                    <button
-                      onClick={() => {
-                        setActiveFocusTask(task);
-                        setIsPomodoroOpen(true);
-                        switchPomodoroMode('pomodoro');
-                      }}
-                      title="Bu göreve odaklan (Pomodoro)"
-                      className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-amber-500/40 text-zinc-400 hover:text-amber-400 transition text-xs flex items-center gap-1"
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => openActivity(task)}
-                      title="Geçmiş & Aktivite"
-                      className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 transition"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingTask(task);
-                        setIsTaskModalOpen(true);
-                      }}
-                      title="Düzenle"
-                      className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 transition"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTask(task.id)}
-                      title="Arşivle"
-                      className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-red-500/30 text-zinc-400 hover:text-red-400 transition"
-                    >
-                      <Archive className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))
+              <TaskList
+                tasks={filteredTasks}
+                onOpen={setSelectedTask}
+                onStatus={handleStatusChange}
+                activeProfile={activeProfile}
+              />
             )}
-          </div>
-        ) : (
-          /* KANBAN BOARD VIEW */
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pb-4">
-            {[
-              { status: 'inbox', label: '📥 Gelen Kutusu', color: 'border-blue-500/40' },
-              { status: 'todo', label: '📋 Yapılacaklar', color: 'border-zinc-500/40' },
-              { status: 'progress', label: '🚀 Devam Eden', color: 'border-amber-500/40' },
-              { status: 'done', label: '✅ Tamamlanan', color: 'border-emerald-500/40' }
-            ].map((col) => {
-              const colTasks = filteredTasks.filter((t) => (col.status === 'todo' ? t.status === 'todo' || t.status === 'waiting' : t.status === col.status));
-              return (
-                <div key={col.status} className="bg-zinc-900/40 rounded-2xl p-3 border border-zinc-800/80 flex flex-col gap-3 min-h-[400px]">
-                  <div className={`flex items-center justify-between pb-2 border-b ${col.color}`}>
-                    <span className="font-semibold text-xs text-zinc-300">{col.label}</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
-                      {colTasks.length}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 flex-1">
-                    {colTasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 hover:border-zinc-700 transition cursor-pointer"
-                        onClick={() => {
-                          setEditingTask(task);
-                          setIsTaskModalOpen(true);
-                        }}
-                      >
-                        <div className="font-medium text-xs text-zinc-100 mb-1">{task.title}</div>
-                        {task.description && <p className="text-[11px] text-zinc-400 line-clamp-2 mb-2">{task.description}</p>}
-                        <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                          <span>{task.project || 'Genel'}</span>
-                          {task.due_date && <span>{task.due_date}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+          </section>
+        </div>
       </main>
 
-      {/* ⏱️ 5. POMODORO / DEEP WORK MODAL DRAWER */}
-      {isPomodoroOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel p-6 sm:p-8 rounded-3xl border border-zinc-800 shadow-2xl relative">
-            <button
-              onClick={() => setIsPomodoroOpen(false)}
-              className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 p-2"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      <TaskDrawer
+        task={selectedTask}
+        profiles={profiles}
+        profileId={activeProfile.id}
+        onClose={() => setSelectedTask(null)}
+        onSave={handleSaveTask}
+        onArchive={handleArchiveTask}
+      />
 
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-6 bg-zinc-900/80 p-1 rounded-2xl border border-zinc-800 inline-flex mx-auto">
-                <button
-                  onClick={() => switchPomodoroMode('pomodoro')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    pomodoroMode === 'pomodoro' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Odak (25m)
-                </button>
-                <button
-                  onClick={() => switchPomodoroMode('shortBreak')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    pomodoroMode === 'shortBreak' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Kısa Mola (5m)
-                </button>
-                <button
-                  onClick={() => switchPomodoroMode('longBreak')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    pomodoroMode === 'longBreak' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Uzun Mola (15m)
-                </button>
-              </div>
-
-              {/* Huge Timer Display */}
-              <div className="text-6xl sm:text-7xl font-mono font-extrabold tracking-wider my-6 text-amber-400">
-                {formatTime(pomodoroTimeLeft)}
-              </div>
-
-              {/* Active Task Info */}
-              {activeFocusTask ? (
-                <div className="bg-zinc-900/80 p-3 rounded-xl border border-amber-500/20 text-xs mb-6 text-zinc-300">
-                  <span className="text-zinc-500 block text-[10px] uppercase font-mono">Odaklanılan Görev:</span>
-                  <span className="font-semibold text-amber-300">{activeFocusTask.title}</span>
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-500 mb-6 font-mono">Derin odaklanma modu devrede</p>
-              )}
-
-              {/* Timer Controls */}
-              <div className="flex items-center justify-center gap-4">
-                <button
-                  onClick={() => setIsPomodoroRunning(!isPomodoroRunning)}
-                  className={`w-14 h-14 rounded-2xl flex items-center justify-center text-zinc-950 transition shadow-lg ${
-                    isPomodoroRunning
-                      ? 'bg-amber-400 hover:bg-amber-300 shadow-amber-500/20'
-                      : 'bg-amber-500 hover:bg-amber-400 shadow-amber-500/30'
-                  }`}
-                >
-                  {isPomodoroRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-1" />}
-                </button>
-                <button
-                  onClick={() => switchPomodoroMode(pomodoroMode)}
-                  title="Sıfırla"
-                  className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-200 transition"
-                >
-                  <RotateCcw className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
+      {toast && (
+        <div className="toast">
+          <Check size={16} />
+          {toast}
         </div>
       )}
-
-      {/* ➕ 6. TASK CREATE / EDIT MODAL */}
-      {isTaskModalOpen && (
-        <TaskFormModal
-          task={editingTask}
-          onClose={() => {
-            setIsTaskModalOpen(false);
-            setEditingTask(null);
-          }}
-          onSave={handleSaveTask}
-        />
-      )}
-
-      {/* 📜 7. ACTIVITY HISTORY MODAL */}
-      {activityTask && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-lg glass-panel p-6 rounded-3xl border border-zinc-800 shadow-2xl relative max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
-              <div>
-                <h3 className="font-bold text-sm text-zinc-100">Görev Geçmişi</h3>
-                <p className="text-xs text-zinc-400 truncate max-w-sm">{activityTask.title}</p>
-              </div>
-              <button onClick={() => setActivityTask(null)} className="p-2 text-zinc-400 hover:text-zinc-200">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-4 space-y-3">
-              {activities.length === 0 ? (
-                <p className="text-xs text-zinc-500 text-center py-6">Kayıtlı aktivite bulunamadı.</p>
-              ) : (
-                activities.map((act) => (
-                  <div key={act.id} className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 text-xs">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-zinc-300">{act.actor_name || 'Kullanıcı'}</span>
-                      <span className="text-[10px] text-zinc-500 font-mono">{act.created_at}</span>
-                    </div>
-                    <p className="text-zinc-400">
-                      <span className="font-medium text-amber-400 uppercase text-[10px] mr-1">{act.action}</span>
-                      {act.detail}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🔐 8. SET NEW PIN MODAL */}
-      {isSettingPin && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-xs glass-panel p-6 rounded-2xl border border-zinc-800 shadow-2xl text-center">
-            <Shield className="w-8 h-8 text-amber-500 mx-auto mb-3" />
-            <h3 className="font-bold text-sm mb-1">4 Haneli PIN Belirle</h3>
-            <p className="text-xs text-zinc-400 mb-4">Ortak cihazlarda görevlerinizi tek tıkla kilitleyin</p>
-            <input
-              type="password"
-              maxLength={6}
-              value={newPinInput}
-              onChange={(e) => setNewPinInput(e.target.value)}
-              placeholder="1234"
-              className="w-full py-2.5 text-center text-xl tracking-[0.4em] font-mono bg-zinc-900 border border-zinc-700 rounded-xl mb-4 focus:border-amber-500 focus:outline-none"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => setIsSettingPin(false)}
-                className="flex-1 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-400"
-              >
-                İptal
-              </button>
-              <button
-                onClick={saveNewPin}
-                className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs"
-              >
-                Kaydet
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 📱 9. MOBILE BOTTOM NAVIGATION */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-t border-zinc-800 px-4 py-2 flex items-center justify-around">
-        <button
-          onClick={() => setActiveTab('inbox')}
-          className={`flex flex-col items-center gap-1 text-[10px] ${activeTab === 'inbox' ? 'text-amber-400' : 'text-zinc-500'}`}
-        >
-          <Layers className="w-5 h-5" />
-          <span>Görevler</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('today')}
-          className={`flex flex-col items-center gap-1 text-[10px] ${activeTab === 'today' ? 'text-amber-400' : 'text-zinc-500'}`}
-        >
-          <Calendar className="w-5 h-5" />
-          <span>Bugün</span>
-        </button>
-        <button
-          onClick={() => {
-            setEditingTask(null);
-            setIsTaskModalOpen(true);
-          }}
-          className="w-10 h-10 -mt-4 bg-amber-500 rounded-full flex items-center justify-center text-zinc-950 shadow-lg shadow-amber-500/30"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-        <button
-          onClick={() => setIsPomodoroOpen(true)}
-          className="flex flex-col items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400"
-        >
-          <Clock className="w-5 h-5" />
-          <span>Odak</span>
-        </button>
-        <button
-          onClick={() => (userPin ? setIsLocked(true) : setIsSettingPin(true))}
-          className="flex flex-col items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400"
-        >
-          <Lock className="w-5 h-5" />
-          <span>Kilit</span>
-        </button>
-      </nav>
-    </div>
-  );
-}
-
-// 📝 Task Creation & Edit Form Component
-function TaskFormModal({ task, onClose, onSave }) {
-  const [title, setTitle] = useState(task?.title || '');
-  const [description, setDescription] = useState(task?.description || '');
-  const [status, setStatus] = useState(task?.status || 'inbox');
-  const [priority, setPriority] = useState(task?.priority || 'normal');
-  const [project, setProject] = useState(task?.project || '');
-  const [requester, setRequester] = useState(task?.requester || '');
-  const [dueDate, setDueDate] = useState(task?.due_date || '');
-  const [estimatedMinutes, setEstimatedMinutes] = useState(task?.estimated_minutes || '');
-  const [tags, setTags] = useState((task?.tags || []).join(', '));
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-
-    onSave({
-      title: title.trim(),
-      description: description.trim(),
-      status,
-      priority,
-      project: project.trim(),
-      requester: requester.trim(),
-      due_date: dueDate || null,
-      estimated_minutes: estimatedMinutes ? Number(estimatedMinutes) : null,
-      tags: tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean)
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="w-full max-w-lg glass-panel p-6 rounded-3xl border border-zinc-800 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-        <button onClick={onClose} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 p-2">
-          <X className="w-5 h-5" />
-        </button>
-
-        <h2 className="text-base font-bold text-zinc-100 mb-4">
-          {task ? 'Görevi Düzenle' : 'Yeni Görev Ekle'}
-        </h2>
-
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block text-zinc-400 font-medium mb-1">Görev Başlığı *</label>
-            <input
-              type="text"
-              required
-              autoFocus
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Örn: Yeni API endpoint'lerini hazırla"
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-zinc-400 font-medium mb-1">Açıklama</label>
-            <textarea
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Görev detayları, notlar..."
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Durum</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              >
-                <option value="inbox">Gelen Kutusu</option>
-                <option value="todo">Yapılacak</option>
-                <option value="progress">Devam Eden</option>
-                <option value="waiting">Beklemede</option>
-                <option value="done">Tamamlandı</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Öncelik</label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              >
-                <option value="low">Düşük</option>
-                <option value="normal">Normal</option>
-                <option value="high">Yüksek</option>
-                <option value="urgent">Acil</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Proje / Kategori</label>
-              <input
-                type="text"
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                placeholder="Örn: The Demir Hub"
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Son Tarih</label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Tahmini Süre (dk)</label>
-              <input
-                type="number"
-                min="0"
-                value={estimatedMinutes}
-                onChange={(e) => setEstimatedMinutes(e.target.value)}
-                placeholder="45"
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Etiketler (virgülle ayırın)</label>
-              <input
-                type="text"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="frontend, backend, sso"
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-zinc-100 focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-medium rounded-xl transition"
-            >
-              Vazgeç
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-xl transition shadow-sm"
-            >
-              {task ? 'Güncelle' : 'Kaydet'}
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }
